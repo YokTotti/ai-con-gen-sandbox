@@ -1,0 +1,786 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ./dev — Claude Code Docker インスタンス管理 CLI
+#
+# Usage:
+#   ./dev create <type> <name>    インスタンス作成＋起動
+#   ./dev connect <name> [cmd]    コンテナに接続（デフォルト: bash）
+#   ./dev list                    全インスタンス一覧
+#   ./dev rm <name> [--volumes]   インスタンス削除
+#   ./dev purge-shared [vol ...]  共有ボリューム削除
+#   ./dev start <name>            インスタンス起動
+#   ./dev stop <name>             インスタンス停止
+#   ./dev up                      全インスタンス一括起動
+#   ./dev down                    全インスタンス一括停止
+#   ./dev build [type]            イメージビルド
+#   ./dev regenerate              compose.generated.yml 再生成
+#   ./dev ps                      実行中コンテナの状態
+#   ./dev auth-status [name]      Claude CLI 認証状態の確認
+#   ./dev types                   利用可能なコンテナタイプ一覧
+# =============================================================================
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REGISTRY="$SCRIPT_DIR/instances/registry.json"
+COMPOSE_BASE="$SCRIPT_DIR/compose.yml"
+COMPOSE_GENERATED="$SCRIPT_DIR/compose.generated.yml"
+
+VALID_TYPES=("web-dev" "apple-dev" "sandbox")
+
+# =============================================================================
+# 前提チェック
+# =============================================================================
+
+check_deps() {
+    if ! command -v jq &>/dev/null; then
+        echo "Error: jq が必要です。brew install jq でインストールしてください。" >&2
+        exit 1
+    fi
+    if ! command -v docker &>/dev/null; then
+        echo "Error: docker が必要です。" >&2
+        exit 1
+    fi
+}
+
+# =============================================================================
+# バリデーション
+# =============================================================================
+
+validate_name() {
+    local name="$1"
+    if [[ ! "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+        echo "Error: インスタンス名は [a-z0-9][a-z0-9-]* のみ許可されます: '$name'" >&2
+        exit 1
+    fi
+}
+
+validate_type() {
+    local type="$1"
+    for t in "${VALID_TYPES[@]}"; do
+        if [[ "$t" == "$type" ]]; then
+            return 0
+        fi
+    done
+    echo "Error: 不明なコンテナタイプ '$type'" >&2
+    echo "利用可能なタイプ: ${VALID_TYPES[*]}" >&2
+    exit 1
+}
+
+# =============================================================================
+# レジストリ操作
+# =============================================================================
+
+ensure_registry() {
+    if [[ ! -f "$REGISTRY" ]]; then
+        mkdir -p "$(dirname "$REGISTRY")"
+        echo '{"instances": {}}' > "$REGISTRY"
+    fi
+}
+
+registry_get() {
+    jq -r "$1" "$REGISTRY"
+}
+
+registry_add() {
+    local name="$1" type="$2"
+    local tmp
+    tmp=$(mktemp)
+    jq --arg name "$name" --arg type "$type" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '.instances[$name] = {"type": $type, "created": $created}' "$REGISTRY" > "$tmp"
+    mv "$tmp" "$REGISTRY"
+}
+
+registry_remove() {
+    local name="$1"
+    local tmp
+    tmp=$(mktemp)
+    jq --arg name "$name" 'del(.instances[$name])' "$REGISTRY" > "$tmp"
+    mv "$tmp" "$REGISTRY"
+}
+
+instance_exists() {
+    local name="$1"
+    [[ "$(registry_get ".instances[\"$name\"] // empty")" != "" ]]
+}
+
+instance_type() {
+    local name="$1"
+    registry_get ".instances[\"$name\"].type"
+}
+
+# =============================================================================
+# Docker Compose ラッパー
+# =============================================================================
+
+compose_cmd() {
+    local -a files=(-f "$COMPOSE_BASE")
+    if [[ -f "$COMPOSE_GENERATED" ]]; then
+        files+=(-f "$COMPOSE_GENERATED")
+    fi
+    docker compose --project-directory "$SCRIPT_DIR" "${files[@]}" "$@"
+}
+
+# =============================================================================
+# テンプレート: 各タイプの YAML 生成
+# =============================================================================
+
+generate_web_dev_service() {
+    local name="$1"
+    cat <<YAML
+  ${name}:
+    build:
+      context: ./containers/web-dev
+      args:
+        NODE_VERSION: \${NODE_VERSION:-22}
+        GO_VERSION: \${GO_VERSION:-1.25.0}
+        PYTHON_VERSION: \${PYTHON_VERSION:-3.13}
+        PNPM_VERSION: \${PNPM_VERSION:-10}
+    image: acg-sandbox-web-dev
+    container_name: acg-${name}
+    hostname: ${name}
+    stdin_open: true
+    tty: true
+    init: true
+    environment:
+      - ANTHROPIC_API_KEY=\${ANTHROPIC_API_KEY:-}
+      - GITHUB_TOKEN=\${GITHUB_TOKEN:-}
+      - DATABASE_URL=postgresql://\${POSTGRES_USER:-postgres}:\${POSTGRES_PASSWORD:-postgres}@postgres:5432/\${POSTGRES_DB:-app_development}
+      - PGHOST=postgres
+      - PGPORT=5432
+      - PGUSER=\${POSTGRES_USER:-postgres}
+      - PGPASSWORD=\${POSTGRES_PASSWORD:-postgres}
+      - PGDATABASE=\${POSTGRES_DB:-app_development}
+    volumes:
+      - ${name}-project:/home/coder/project
+      - shared-claude-config:/home/coder/.claude
+      - shared-gh-config:/home/coder/.config/gh
+      - ${name}-go-cache:/home/coder/go
+      - ${name}-pnpm-store:/home/coder/.local/share/pnpm
+      - ${name}-uv-cache:/home/coder/.cache/uv
+    networks:
+      - acg-sandbox-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+YAML
+}
+
+generate_apple_dev_service() {
+    local name="$1"
+    cat <<YAML
+  ${name}:
+    build:
+      context: ./containers/apple-dev
+      args:
+        SWIFT_VERSION: \${SWIFT_VERSION:-6.1}
+    image: acg-sandbox-apple-dev
+    container_name: acg-${name}
+    hostname: ${name}
+    stdin_open: true
+    tty: true
+    init: true
+    environment:
+      - ANTHROPIC_API_KEY=\${ANTHROPIC_API_KEY:-}
+      - GITHUB_TOKEN=\${GITHUB_TOKEN:-}
+    volumes:
+      - ${name}-project:/home/coder/project
+      - shared-claude-config:/home/coder/.claude
+      - shared-gh-config:/home/coder/.config/gh
+    networks:
+      - acg-sandbox-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+YAML
+}
+
+generate_sandbox_service() {
+    local name="$1"
+    cat <<YAML
+  ${name}:
+    build:
+      context: ./containers/sandbox
+      args:
+        NODE_VERSION: \${NODE_VERSION:-22}
+        PYTHON_VERSION: \${PYTHON_VERSION:-3.13}
+    image: acg-sandbox-sandbox
+    container_name: acg-${name}
+    hostname: ${name}
+    stdin_open: true
+    tty: true
+    init: true
+    environment:
+      - ANTHROPIC_API_KEY=\${ANTHROPIC_API_KEY:-}
+      - GITHUB_TOKEN=\${GITHUB_TOKEN:-}
+    volumes:
+      - ${name}-project:/home/coder/project
+      - shared-claude-config:/home/coder/.claude
+      - shared-gh-config:/home/coder/.config/gh
+      - ${name}-uv-cache:/home/coder/.cache/uv
+    networks:
+      - acg-sandbox-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+YAML
+}
+
+generate_service() {
+    local type="$1" name="$2"
+    case "$type" in
+        web-dev)   generate_web_dev_service "$name" ;;
+        apple-dev) generate_apple_dev_service "$name" ;;
+        sandbox)   generate_sandbox_service "$name" ;;
+    esac
+}
+
+# インスタンスのボリューム名一覧を返す
+get_instance_volumes() {
+    local name="$1" type="$2"
+    local volumes=("${name}-project")
+    case "$type" in
+        web-dev)
+            volumes+=("${name}-go-cache" "${name}-pnpm-store" "${name}-uv-cache")
+            ;;
+        sandbox)
+            volumes+=("${name}-uv-cache")
+            ;;
+    esac
+    echo "${volumes[@]}"
+}
+
+# =============================================================================
+# regenerate: registry.json → compose.generated.yml
+# =============================================================================
+
+regenerate() {
+    ensure_registry
+
+    local instance_count
+    instance_count=$(registry_get '.instances | length')
+
+    if [[ "$instance_count" -eq 0 ]]; then
+        rm -f "$COMPOSE_GENERATED"
+        return
+    fi
+
+    local services="" volumes="" name type
+
+    # インスタンスごとにサービスとボリュームを生成
+    while IFS='|' read -r name type; do
+        services+="$(generate_service "$type" "$name")"
+        services+=$'\n'
+
+        # ボリューム定義
+        for vol in $(get_instance_volumes "$name" "$type"); do
+            volumes+="  ${vol}:"$'\n'
+        done
+    done < <(registry_get '.instances | to_entries[] | "\(.key)|\(.value.type)"')
+
+    cat > "$COMPOSE_GENERATED" <<EOF
+# =============================================================================
+# 自動生成ファイル — 手動編集しないでください
+# ./dev コマンドにより instances/registry.json から生成されます
+# =============================================================================
+
+services:
+${services}
+volumes:
+${volumes}
+EOF
+}
+
+# =============================================================================
+# サブコマンド実装
+# =============================================================================
+
+cmd_create() {
+    if [[ $# -lt 2 ]]; then
+        echo "Usage: ./dev create <type> <name>" >&2
+        exit 1
+    fi
+    local type="$1" name="$2"
+
+    validate_type "$type"
+    validate_name "$name"
+
+    if instance_exists "$name"; then
+        echo "Error: インスタンス '$name' は既に存在します。" >&2
+        exit 1
+    fi
+
+    echo "インスタンス '$name' (type: $type) を作成しています..."
+
+    registry_add "$name" "$type"
+    regenerate
+
+    echo "compose.generated.yml を再生成しました。"
+
+    # compose.generated.yml が正しく生成されたか検証
+    if [[ ! -f "$COMPOSE_GENERATED" ]] || ! grep -q "^  ${name}:" "$COMPOSE_GENERATED"; then
+        echo "Error: サービス '$name' が compose.generated.yml に見つかりません。" >&2
+        echo "regenerate の結果を確認してください。" >&2
+        exit 1
+    fi
+
+    echo "コンテナを起動しています..."
+
+    compose_cmd up -d "$name"
+
+    echo "✓ インスタンス '$name' を作成・起動しました。"
+    echo "  接続: ./dev connect $name"
+}
+
+cmd_connect() {
+    if [[ $# -lt 1 ]]; then
+        echo "Usage: ./dev connect <name> [command]" >&2
+        exit 1
+    fi
+    local name="$1"
+    local command="${2:-bash}"
+
+    if ! instance_exists "$name"; then
+        echo "Error: インスタンス '$name' が見つかりません。./dev list で確認してください。" >&2
+        exit 1
+    fi
+
+    # コンテナが起動しているかチェック
+    if ! compose_cmd ps --status running "$name" 2>/dev/null | grep -q "$name"; then
+        echo "インスタンス '$name' が停止しています。起動します..."
+        compose_cmd up -d "$name"
+        sleep 2
+    fi
+
+    compose_cmd exec -it "$name" "$command"
+}
+
+cmd_list() {
+    ensure_registry
+
+    local instance_count name type created status
+    instance_count=$(registry_get '.instances | length')
+
+    if [[ "$instance_count" -eq 0 ]]; then
+        echo "登録済みインスタンスはありません。"
+        echo "  作成: ./dev create <type> <name>"
+        return
+    fi
+
+    printf "%-20s %-12s %-12s %s\n" "NAME" "TYPE" "STATUS" "CREATED"
+    printf "%-20s %-12s %-12s %s\n" "----" "----" "------" "-------"
+
+    while IFS='|' read -r name type created; do
+        status="stopped"
+        if compose_cmd ps --status running "$name" 2>/dev/null | grep -q "$name"; then
+            status="running"
+        fi
+        printf "%-20s %-12s %-12s %s\n" "$name" "$type" "$status" "$created"
+    done < <(registry_get '.instances | to_entries[] | "\(.key)|\(.value.type)|\(.value.created)"')
+}
+
+cmd_rm() {
+    if [[ $# -lt 1 ]]; then
+        echo "Usage: ./dev rm <name> [--volumes]" >&2
+        exit 1
+    fi
+    local name="$1"
+    local remove_volumes=false
+    local type vol
+
+    if [[ "${2:-}" == "--volumes" ]]; then
+        remove_volumes=true
+    fi
+
+    if ! instance_exists "$name"; then
+        echo "Error: インスタンス '$name' が見つかりません。" >&2
+        exit 1
+    fi
+
+    type=$(instance_type "$name")
+
+    echo "インスタンス '$name' を削除しています..."
+
+    # コンテナ停止・削除
+    compose_cmd rm -sf "$name" 2>/dev/null || true
+
+    # ボリューム削除
+    if [[ "$remove_volumes" == true ]]; then
+        echo "ボリュームを削除しています..."
+        local project_name
+        project_name=$(compose_cmd config --format json 2>/dev/null | jq -r '.name' 2>/dev/null) || project_name=""
+        if [[ -z "$project_name" ]]; then
+            # フォールバック: ディレクトリ名を小文字に変換（Docker Compose のデフォルト動作と同じ）
+            project_name=$(basename "$SCRIPT_DIR" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g')
+        fi
+        for vol in $(get_instance_volumes "$name" "$type"); do
+            local full_vol="${project_name}_${vol}"
+            if docker volume inspect "$full_vol" &>/dev/null; then
+                # ボリュームを参照しているコンテナを強制削除（停止済み含む）
+                local ref_containers
+                ref_containers=$(docker ps -aq --filter "volume=$full_vol" 2>/dev/null)
+                if [[ -n "$ref_containers" ]]; then
+                    echo "$ref_containers" | xargs docker rm -f &>/dev/null || true
+                fi
+                if docker volume rm "$full_vol" &>/dev/null; then
+                    echo "  ボリューム削除: $full_vol"
+                else
+                    echo "  ⚠ ボリューム削除失敗: ${full_vol}（使用中の可能性があります）" >&2
+                fi
+            fi
+        done
+    fi
+
+    # レジストリから削除して再生成
+    registry_remove "$name"
+    regenerate
+
+    echo "✓ インスタンス '$name' を削除しました。"
+    if [[ "$remove_volumes" == false ]]; then
+        echo "  ※ ボリュームは保持されています。削除するには: ./dev rm $name --volumes"
+    fi
+}
+
+cmd_purge_shared() {
+    # 共有ボリューム定義（並列配列: bash 3.2 互換）
+    local vol_names=("shared-claude-config" "shared-gh-config" "postgres-data")
+    local vol_descs=("Claude CLI 認証情報" "GitHub CLI 認証情報" "PostgreSQL データ")
+
+    # 引数バリデーション
+    local targets=()
+    if [[ $# -gt 0 ]]; then
+        for arg in "$@"; do
+            local found=false
+            for name in "${vol_names[@]}"; do
+                if [[ "$name" == "$arg" ]]; then
+                    found=true
+                    break
+                fi
+            done
+            if [[ "$found" == false ]]; then
+                echo "Error: 不明な共有ボリューム名 '$arg'" >&2
+                echo "有効なボリューム名: ${vol_names[*]}" >&2
+                exit 1
+            fi
+            targets+=("$arg")
+        done
+    else
+        targets=("${vol_names[@]}")
+    fi
+
+    # project_name 取得
+    local project_name
+    project_name=$(compose_cmd config --format json 2>/dev/null | jq -r '.name' 2>/dev/null) || project_name=""
+    if [[ -z "$project_name" ]]; then
+        project_name=$(basename "$SCRIPT_DIR" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g')
+    fi
+
+    echo "共有ボリュームを削除します。"
+
+    # コンテナ稼働チェック
+    if compose_cmd ps -q 2>/dev/null | grep -q .; then
+        echo "⚠ 稼働中のコンテナがあります。先に ./dev down を推奨します。"
+    fi
+    echo ""
+
+    # 各ボリュームを個別確認→削除
+    local deleted=0 skipped=0 failed=0
+    for vol in "${targets[@]}"; do
+        local desc=""
+        for i in "${!vol_names[@]}"; do
+            if [[ "${vol_names[$i]}" == "$vol" ]]; then
+                desc="${vol_descs[$i]}"
+                break
+            fi
+        done
+        local full_vol="${project_name}_${vol}"
+        printf "  %s (%s) を削除しますか？ [y/N]: " "$vol" "$desc"
+        read -r answer
+        if [[ "$answer" =~ ^[yY]$ ]]; then
+            if docker volume inspect "$full_vol" &>/dev/null; then
+                # ボリュームを参照しているコンテナを強制削除（停止済み含む）
+                local ref_containers
+                ref_containers=$(docker ps -aq --filter "volume=$full_vol" 2>/dev/null)
+                if [[ -n "$ref_containers" ]]; then
+                    echo "$ref_containers" | xargs docker rm -f &>/dev/null || true
+                fi
+                if docker volume rm "$full_vol" &>/dev/null; then
+                    echo "  → 削除しました: $full_vol"
+                    ((deleted++))
+                else
+                    echo "  → ⚠ 削除失敗: ${full_vol}（使用中の可能性があります）" >&2
+                    ((failed++))
+                fi
+            else
+                echo "  → ボリュームが存在しません: $full_vol"
+                ((skipped++))
+            fi
+        else
+            echo "  → スキップしました: $vol"
+            ((skipped++))
+        fi
+    done
+
+    echo ""
+    echo "結果: 削除 ${deleted}, スキップ ${skipped}, 失敗 ${failed}"
+}
+
+cmd_start() {
+    if [[ $# -lt 1 ]]; then
+        echo "Usage: ./dev start <name>" >&2
+        exit 1
+    fi
+    local name="$1"
+
+    if ! instance_exists "$name"; then
+        echo "Error: インスタンス '$name' が見つかりません。" >&2
+        exit 1
+    fi
+
+    compose_cmd up -d "$name"
+    echo "✓ インスタンス '$name' を起動しました。"
+}
+
+cmd_stop() {
+    if [[ $# -lt 1 ]]; then
+        echo "Usage: ./dev stop <name>" >&2
+        exit 1
+    fi
+    local name="$1"
+
+    if ! instance_exists "$name"; then
+        echo "Error: インスタンス '$name' が見つかりません。" >&2
+        exit 1
+    fi
+
+    compose_cmd stop "$name"
+    echo "✓ インスタンス '$name' を停止しました。"
+}
+
+cmd_up() {
+    ensure_registry
+
+    local instance_count
+    instance_count=$(registry_get '.instances | length')
+
+    if [[ "$instance_count" -eq 0 ]]; then
+        echo "登録済みインスタンスはありません。"
+        return
+    fi
+
+    echo "全インスタンスを起動しています..."
+    compose_cmd up -d
+    echo "✓ 全インスタンスを起動しました。"
+}
+
+cmd_down() {
+    echo "全コンテナを停止しています..."
+    compose_cmd down
+    echo "✓ 全コンテナを停止しました。"
+}
+
+cmd_build() {
+    local type="${1:-}"
+
+    if [[ -z "$type" ]]; then
+        echo "全タイプのイメージをビルドしています..."
+        for t in "${VALID_TYPES[@]}"; do
+            echo "--- $t ---"
+            docker build --no-cache -t "acg-sandbox-${t}" "$SCRIPT_DIR/containers/${t}"
+        done
+        echo "✓ 全イメージをビルドしました。"
+    else
+        validate_type "$type"
+        echo "イメージ 'acg-sandbox-${type}' をビルドしています..."
+        docker build --no-cache -t "acg-sandbox-${type}" "$SCRIPT_DIR/containers/${type}"
+        echo "✓ イメージ 'acg-sandbox-${type}' をビルドしました。"
+    fi
+}
+
+cmd_regenerate() {
+    echo "compose.generated.yml を再生成しています..."
+    regenerate
+    if [[ -f "$COMPOSE_GENERATED" ]]; then
+        echo "✓ compose.generated.yml を再生成しました。"
+    else
+        echo "✓ 登録済みインスタンスがないため compose.generated.yml を削除しました。"
+    fi
+}
+
+cmd_ps() {
+    compose_cmd ps
+}
+
+cmd_types() {
+    echo "利用可能なコンテナタイプ:"
+    echo ""
+    echo "  web-dev     Web アプリ開発（Node.js, Go, Python, pnpm, Playwright + PostgreSQL）"
+    echo "  apple-dev   macOS/iOS 開発補助（Swift toolchain）"
+    echo "  sandbox     GAS・単発作業・実験（Node.js, Python, clasp）"
+    echo ""
+    echo "Usage: ./dev create <type> <name>"
+}
+
+cmd_auth_status() {
+    local name="${1:-}"
+
+    if [[ -n "$name" ]]; then
+        # 特定インスタンスの認証状態を確認
+        if ! instance_exists "$name"; then
+            echo "Error: インスタンス '$name' が見つかりません。" >&2
+            exit 1
+        fi
+        echo "=== インスタンス '$name' の Claude CLI 認証状態 ==="
+        compose_cmd exec "$name" bash -c '
+            CRED="$HOME/.claude/.credentials.json"
+            if [ ! -f "$CRED" ]; then
+                echo "状態: 未認証（.credentials.json が見つかりません）"
+                exit 0
+            fi
+
+            echo "ファイル: $CRED"
+            echo "パーミッション: $(ls -la "$CRED" | awk "{print \$1, \$3, \$4}")"
+            echo ""
+
+            # アクセストークンの有効期限を確認
+            expires_at=$(jq -r ".claudeAiOauth.expiresAt // \"unknown\"" "$CRED" 2>/dev/null)
+            has_access=$(jq -r ".claudeAiOauth.accessToken // empty" "$CRED" 2>/dev/null)
+            has_refresh=$(jq -r ".claudeAiOauth.refreshToken // empty" "$CRED" 2>/dev/null)
+
+            echo "アクセストークン: $([ -n "$has_access" ] && echo "あり" || echo "なし")"
+            echo "リフレッシュトークン: $([ -n "$has_refresh" ] && echo "あり" || echo "なし")"
+
+            if [ "$expires_at" != "unknown" ] && [ -n "$expires_at" ]; then
+                expires_sec=$((expires_at / 1000))
+                expires_date=$(date -d "@$expires_sec" "+%Y-%m-%d %H:%M:%S %Z" 2>/dev/null || date -r "$expires_sec" "+%Y-%m-%d %H:%M:%S %Z" 2>/dev/null || echo "変換失敗")
+                now_ms=$(date +%s%3N 2>/dev/null || echo "0")
+
+                echo "有効期限: $expires_date（epoch ms: $expires_at）"
+
+                if [ "$now_ms" != "0" ] && [ "$expires_at" -lt "$now_ms" ] 2>/dev/null; then
+                    diff_sec=$(( (now_ms - expires_at) / 1000 ))
+                    diff_hours=$(( diff_sec / 3600 ))
+                    diff_days=$(( diff_hours / 24 ))
+                    echo "状態: ⚠ 期限切れ（${diff_days}日${diff_hours}時間前）"
+                else
+                    diff_sec=$(( (expires_at - now_ms) / 1000 ))
+                    diff_hours=$(( diff_sec / 3600 ))
+                    echo "状態: ✓ 有効（残り約${diff_hours}時間）"
+                fi
+            else
+                echo "有効期限: 不明"
+            fi
+
+            echo ""
+            echo "コンテナ情報:"
+            echo "  hostname: $(hostname)"
+            echo "  machine-id: $(cat /etc/machine-id 2>/dev/null || echo "なし")"
+        ' 2>/dev/null || echo "Error: コンテナが起動していません。./dev start $name で起動してください。"
+    else
+        # 全インスタンスの認証状態をサマリ表示
+        echo "=== Claude CLI 認証状態（全インスタンス） ==="
+        echo ""
+        ensure_registry
+        local instance_count
+        instance_count=$(registry_get '.instances | length')
+
+        if [[ "$instance_count" -eq 0 ]]; then
+            echo "登録済みインスタンスはありません。"
+            return
+        fi
+
+        while IFS='|' read -r iname itype; do
+            printf "%-20s " "$iname"
+            if compose_cmd ps --status running "$iname" 2>/dev/null | grep -q "$iname"; then
+                result=$(compose_cmd exec "$iname" bash -c '
+                    CRED="$HOME/.claude/.credentials.json"
+                    if [ ! -f "$CRED" ]; then echo "未認証"; exit 0; fi
+                    expires_at=$(jq -r ".claudeAiOauth.expiresAt // \"unknown\"" "$CRED" 2>/dev/null)
+                    if [ "$expires_at" = "unknown" ]; then echo "不明"; exit 0; fi
+                    now_ms=$(date +%s%3N 2>/dev/null || echo "0")
+                    if [ "$now_ms" != "0" ] && [ "$expires_at" -lt "$now_ms" ] 2>/dev/null; then
+                        echo "⚠ 期限切れ"
+                    else
+                        diff_sec=$(( (expires_at - now_ms) / 1000 ))
+                        diff_hours=$(( diff_sec / 3600 ))
+                        echo "✓ 有効（残り${diff_hours}h）"
+                    fi
+                ' 2>/dev/null)
+                echo "$result"
+            else
+                echo "(停止中)"
+            fi
+        done < <(registry_get '.instances | to_entries[] | "\(.key)|\(.value.type)"')
+    fi
+}
+
+cmd_help() {
+    cat <<'HELP'
+Usage: ./dev <command> [arguments]
+
+コマンド:
+  create <type> <name>    インスタンス作成＋起動
+  connect <name> [cmd]    コンテナに接続（デフォルト: bash）
+  list                    全インスタンス一覧
+  rm <name> [--volumes]   インスタンス削除（--volumes でボリュームも削除）
+  purge-shared [vol ...]  共有ボリューム削除（認証情報・DB データ）
+  start <name>            インスタンス起動
+  stop <name>             インスタンス停止
+  up                      全インスタンス一括起動
+  down                    全コンテナ一括停止
+  build [type]            イメージビルド（タイプ省略で全ビルド）
+  regenerate              compose.generated.yml をテンプレートから再生成
+  ps                      実行中コンテナの状態
+  auth-status [name]      Claude CLI 認証状態の確認
+  types                   利用可能なコンテナタイプ一覧
+  help                    このヘルプを表示
+
+例:
+  ./dev create web-dev my-app      # Web 開発インスタンスを作成
+  ./dev create sandbox experiment  # Sandbox インスタンスを作成
+  ./dev connect my-app             # bash で接続
+  ./dev connect my-app claude      # Claude Code を起動
+  ./dev list                       # 一覧表示
+  ./dev rm experiment --volumes    # インスタンスとボリュームを削除
+  ./dev auth-status                # 全インスタンスの認証状態
+  ./dev auth-status my-app         # 特定インスタンスの詳細
+  ./dev purge-shared                  # 全共有ボリュームを削除
+  ./dev purge-shared postgres-data    # PostgreSQL データのみ削除
+HELP
+}
+
+# =============================================================================
+# メインエントリポイント
+# =============================================================================
+
+check_deps
+ensure_registry
+
+command="${1:-help}"
+shift || true
+
+case "$command" in
+    create)     cmd_create "$@" ;;
+    connect)    cmd_connect "$@" ;;
+    list)       cmd_list ;;
+    rm)         cmd_rm "$@" ;;
+    purge-shared) cmd_purge_shared "$@" ;;
+    start)      cmd_start "$@" ;;
+    stop)       cmd_stop "$@" ;;
+    up)         cmd_up ;;
+    down)       cmd_down ;;
+    build)      cmd_build "$@" ;;
+    regenerate) cmd_regenerate ;;
+    ps)          cmd_ps ;;
+    auth-status) cmd_auth_status "$@" ;;
+    types)       cmd_types ;;
+    help)        cmd_help ;;
+    *)
+        echo "Error: 不明なコマンド '$command'" >&2
+        echo "  ./dev help でコマンド一覧を確認してください。" >&2
+        exit 1
+        ;;
+esac

@@ -1,0 +1,22 @@
+# 環境変数（APIキー等の秘匿情報）
+.env
+
+# インスタンス管理（自動生成）
+compose.generated.yml
+instances/registry.json
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.claude/settings.local.json
+bak.claude.json

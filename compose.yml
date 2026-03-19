@@ -1,0 +1,45 @@
+# =============================================================================
+# Claude Code Docker Environment — ベース構成
+# インスタンスのサービス定義は compose.generated.yml に自動生成される
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # PostgreSQL（全 web-dev インスタンスで共有）
+  # ===========================================================================
+  postgres:
+    image: postgres:17-alpine
+    container_name: acg-postgres
+    hostname: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-app_development}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./containers/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - acg-sandbox-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+# =============================================================================
+# ネットワーク — 全インスタンスで共有
+# =============================================================================
+networks:
+  acg-sandbox-net:
+    name: acg-sandbox-net
+    driver: bridge
+
+# =============================================================================
+# Named Volumes — 共有ボリュームのみ定義
+# インスタンス固有のボリュームは compose.generated.yml で定義される
+# =============================================================================
+volumes:
+  shared-claude-config:
+  shared-gh-config:
+  postgres-data:
