@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # =============================================================================
-# ./dev — Claude Code Docker インスタンス管理 CLI
+# ./aicon — Claude Code Docker インスタンス管理 CLI
 #
 # Usage:
-#   ./dev create <type> <name>    インスタンス作成＋起動
-#   ./dev connect <name> [cmd]    コンテナに接続（デフォルト: bash）
-#   ./dev list                    全インスタンス一覧
-#   ./dev rm <name> [--volumes]   インスタンス削除
-#   ./dev purge-shared [vol ...]  共有ボリューム削除
-#   ./dev start <name>            インスタンス起動
-#   ./dev stop <name>             インスタンス停止
-#   ./dev up                      全インスタンス一括起動
-#   ./dev down                    全インスタンス一括停止
-#   ./dev build [type]            イメージビルド
-#   ./dev regenerate              compose.generated.yml 再生成
-#   ./dev ps                      実行中コンテナの状態
-#   ./dev auth-status [name]      Claude CLI 認証状態の確認
-#   ./dev types                   利用可能なコンテナタイプ一覧
+#   ./aicon create <type> <name>    インスタンス作成＋起動
+#   ./aicon connect <name> [cmd]    コンテナに接続（デフォルト: bash）
+#   ./aicon list                    全インスタンス一覧
+#   ./aicon rm <name> [--volumes]   インスタンス削除
+#   ./aicon purge-shared [vol ...]  共有ボリューム削除
+#   ./aicon start <name>            インスタンス起動
+#   ./aicon stop <name>             インスタンス停止
+#   ./aicon up                      全インスタンス一括起動
+#   ./aicon down                    全インスタンス一括停止
+#   ./aicon build [type]            イメージビルド
+#   ./aicon regenerate              compose.generated.yml 再生成
+#   ./aicon ps                      実行中コンテナの状態
+#   ./aicon auth-status [name]      Claude CLI 認証状態の確認
+#   ./aicon types                   利用可能なコンテナタイプ一覧
 # =============================================================================
 
 set -euo pipefail
@@ -284,7 +284,7 @@ regenerate() {
     cat > "$COMPOSE_GENERATED" <<EOF
 # =============================================================================
 # 自動生成ファイル — 手動編集しないでください
-# ./dev コマンドにより instances/registry.json から生成されます
+# ./aicon コマンドにより instances/registry.json から生成されます
 # =============================================================================
 
 services:
@@ -300,7 +300,7 @@ EOF
 
 cmd_create() {
     if [[ $# -lt 2 ]]; then
-        echo "Usage: ./dev create <type> <name>" >&2
+        echo "Usage: ./aicon create <type> <name>" >&2
         exit 1
     fi
     local type="$1" name="$2"
@@ -332,19 +332,19 @@ cmd_create() {
     compose_cmd up -d "$name"
 
     echo "✓ インスタンス '$name' を作成・起動しました。"
-    echo "  接続: ./dev connect $name"
+    echo "  接続: ./aicon connect $name"
 }
 
 cmd_connect() {
     if [[ $# -lt 1 ]]; then
-        echo "Usage: ./dev connect <name> [command]" >&2
+        echo "Usage: ./aicon connect <name> [command]" >&2
         exit 1
     fi
     local name="$1"
     local command="${2:-bash}"
 
     if ! instance_exists "$name"; then
-        echo "Error: インスタンス '$name' が見つかりません。./dev list で確認してください。" >&2
+        echo "Error: インスタンス '$name' が見つかりません。./aicon list で確認してください。" >&2
         exit 1
     fi
 
@@ -366,7 +366,7 @@ cmd_list() {
 
     if [[ "$instance_count" -eq 0 ]]; then
         echo "登録済みインスタンスはありません。"
-        echo "  作成: ./dev create <type> <name>"
+        echo "  作成: ./aicon create <type> <name>"
         return
     fi
 
@@ -384,7 +384,7 @@ cmd_list() {
 
 cmd_rm() {
     if [[ $# -lt 1 ]]; then
-        echo "Usage: ./dev rm <name> [--volumes]" >&2
+        echo "Usage: ./aicon rm <name> [--volumes]" >&2
         exit 1
     fi
     local name="$1"
@@ -440,7 +440,7 @@ cmd_rm() {
 
     echo "✓ インスタンス '$name' を削除しました。"
     if [[ "$remove_volumes" == false ]]; then
-        echo "  ※ ボリュームは保持されています。削除するには: ./dev rm $name --volumes"
+        echo "  ※ ボリュームは保持されています。削除するには: ./aicon rm $name --volumes"
     fi
 }
 
@@ -482,7 +482,7 @@ cmd_purge_shared() {
 
     # コンテナ稼働チェック
     if compose_cmd ps -q 2>/dev/null | grep -q .; then
-        echo "⚠ 稼働中のコンテナがあります。先に ./dev down を推奨します。"
+        echo "⚠ 稼働中のコンテナがあります。先に ./aicon down を推奨します。"
     fi
     echo ""
 
@@ -530,7 +530,7 @@ cmd_purge_shared() {
 
 cmd_start() {
     if [[ $# -lt 1 ]]; then
-        echo "Usage: ./dev start <name>" >&2
+        echo "Usage: ./aicon start <name>" >&2
         exit 1
     fi
     local name="$1"
@@ -546,7 +546,7 @@ cmd_start() {
 
 cmd_stop() {
     if [[ $# -lt 1 ]]; then
-        echo "Usage: ./dev stop <name>" >&2
+        echo "Usage: ./aicon stop <name>" >&2
         exit 1
     fi
     local name="$1"
@@ -621,7 +621,7 @@ cmd_types() {
     echo "  apple-dev   macOS/iOS 開発補助（Swift toolchain）"
     echo "  sandbox     GAS・単発作業・実験（Node.js, Python, clasp）"
     echo ""
-    echo "Usage: ./dev create <type> <name>"
+    echo "Usage: ./aicon create <type> <name>"
 }
 
 cmd_auth_status() {
@@ -678,7 +678,7 @@ cmd_auth_status() {
             echo "コンテナ情報:"
             echo "  hostname: $(hostname)"
             echo "  machine-id: $(cat /etc/machine-id 2>/dev/null || echo "なし")"
-        ' 2>/dev/null || echo "Error: コンテナが起動していません。./dev start $name で起動してください。"
+        ' 2>/dev/null || echo "Error: コンテナが起動していません。./aicon start $name で起動してください。"
     else
         # 全インスタンスの認証状態をサマリ表示
         echo "=== Claude CLI 認証状態（全インスタンス） ==="
@@ -719,7 +719,7 @@ cmd_auth_status() {
 
 cmd_help() {
     cat <<'HELP'
-Usage: ./dev <command> [arguments]
+Usage: ./aicon <command> [arguments]
 
 コマンド:
   create <type> <name>    インスタンス作成＋起動
@@ -739,16 +739,16 @@ Usage: ./dev <command> [arguments]
   help                    このヘルプを表示
 
 例:
-  ./dev create web-dev my-app      # Web 開発インスタンスを作成
-  ./dev create sandbox experiment  # Sandbox インスタンスを作成
-  ./dev connect my-app             # bash で接続
-  ./dev connect my-app claude      # Claude Code を起動
-  ./dev list                       # 一覧表示
-  ./dev rm experiment --volumes    # インスタンスとボリュームを削除
-  ./dev auth-status                # 全インスタンスの認証状態
-  ./dev auth-status my-app         # 特定インスタンスの詳細
-  ./dev purge-shared                  # 全共有ボリュームを削除
-  ./dev purge-shared postgres-data    # PostgreSQL データのみ削除
+  ./aicon create web-dev my-app      # Web 開発インスタンスを作成
+  ./aicon create sandbox experiment  # Sandbox インスタンスを作成
+  ./aicon connect my-app             # bash で接続
+  ./aicon connect my-app claude      # Claude Code を起動
+  ./aicon list                       # 一覧表示
+  ./aicon rm experiment --volumes    # インスタンスとボリュームを削除
+  ./aicon auth-status                # 全インスタンスの認証状態
+  ./aicon auth-status my-app         # 特定インスタンスの詳細
+  ./aicon purge-shared                  # 全共有ボリュームを削除
+  ./aicon purge-shared postgres-data    # PostgreSQL データのみ削除
 HELP
 }
 
@@ -780,7 +780,7 @@ case "$command" in
     help)        cmd_help ;;
     *)
         echo "Error: 不明なコマンド '$command'" >&2
-        echo "  ./dev help でコマンド一覧を確認してください。" >&2
+        echo "  ./aicon help でコマンド一覧を確認してください。" >&2
         exit 1
         ;;
 esac
