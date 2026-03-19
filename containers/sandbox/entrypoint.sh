@@ -36,7 +36,7 @@ fi
 # MCP 設定テンプレートをプロジェクトディレクトリにコピー
 # named volume にはビルド時の書き込みが反映されないため、起動時にコピーする
 # ---------------------------------------------------------------------------
-if [ -f "$HOME/.mcp.json.chrome-devtool" ] && [ ! -f "$HOME/project/.mcp.json.chrome-devtool" ]; then
+if [ -f "$HOME/.mcp.json.chrome-devtool" ] && [ ! -f "$HOME/project/.mcp.json.chrome-devtool" ] && [ ! -f "$HOME/project/.mcp.json" ]; then
     HOST_IP=$(getent ahostsv4 host.docker.internal | awk 'NR==1{print $1}')
     if [ -n "$HOST_IP" ]; then
         sed "s/__HOST_IP__/$HOST_IP/g" "$HOME/.mcp.json.chrome-devtool" > "$HOME/project/.mcp.json.chrome-devtool"
