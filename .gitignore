@@ -20,3 +20,6 @@ Thumbs.db
 *~
 .claude/settings.local.json
 bak.claude.json
+
+# 実装計画（非公開）
+specs/plan/
