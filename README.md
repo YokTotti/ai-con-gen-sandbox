@@ -141,7 +141,7 @@ Check auth status with `./aicon auth-status`.
 | `./aicon build [type]` | Build images (omit type for all) |
 | `./aicon regenerate` | Regenerate compose.generated.yml from templates |
 | `./aicon ps` | Show running container status |
-| `./aicon auth-status [name]` | Check Claude CLI auth status (token expiry) |
+| `./aicon auth-status [name]` | Check Claude Code auth status (token expiry) |
 | `./aicon types` | List available container types |
 | `./aicon help` | Show help |
 
@@ -290,7 +290,7 @@ claude login
 | `./aicon build [type]` | イメージビルド（タイプ省略で全タイプ） |
 | `./aicon regenerate` | compose.generated.yml をテンプレートから再生成 |
 | `./aicon ps` | 実行中コンテナの状態 |
-| `./aicon auth-status [name]` | Claude CLI 認証状態確認（トークン有効期限表示） |
+| `./aicon auth-status [name]` | Claude Code 認証状態確認（トークン有効期限表示） |
 | `./aicon types` | 利用可能なコンテナタイプ一覧 |
 | `./aicon help` | ヘルプ表示 |
 

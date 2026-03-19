@@ -15,7 +15,7 @@
 #   ./aicon build [type]            イメージビルド
 #   ./aicon regenerate              compose.generated.yml 再生成
 #   ./aicon ps                      実行中コンテナの状態
-#   ./aicon auth-status [name]      Claude CLI 認証状態の確認
+#   ./aicon auth-status [name]      Claude Code 認証状態の確認
 #   ./aicon types                   利用可能なコンテナタイプ一覧
 # =============================================================================
 
@@ -447,7 +447,7 @@ cmd_rm() {
 cmd_purge_shared() {
     # 共有ボリューム定義（並列配列: bash 3.2 互換）
     local vol_names=("shared-claude-config" "shared-gh-config" "postgres-data")
-    local vol_descs=("Claude CLI 認証情報" "GitHub CLI 認証情報" "PostgreSQL データ")
+    local vol_descs=("Claude Code 認証情報" "GitHub CLI 認証情報" "PostgreSQL データ")
 
     # 引数バリデーション
     local targets=()
@@ -633,7 +633,7 @@ cmd_auth_status() {
             echo "Error: インスタンス '$name' が見つかりません。" >&2
             exit 1
         fi
-        echo "=== インスタンス '$name' の Claude CLI 認証状態 ==="
+        echo "=== インスタンス '$name' の Claude Code 認証状態 ==="
         compose_cmd exec "$name" bash -c '
             CRED="$HOME/.claude/.credentials.json"
             if [ ! -f "$CRED" ]; then
@@ -681,7 +681,7 @@ cmd_auth_status() {
         ' 2>/dev/null || echo "Error: コンテナが起動していません。./aicon start $name で起動してください。"
     else
         # 全インスタンスの認証状態をサマリ表示
-        echo "=== Claude CLI 認証状態（全インスタンス） ==="
+        echo "=== Claude Code 認証状態（全インスタンス） ==="
         echo ""
         ensure_registry
         local instance_count
@@ -734,7 +734,7 @@ Usage: ./aicon <command> [arguments]
   build [type]            イメージビルド（タイプ省略で全ビルド）
   regenerate              compose.generated.yml をテンプレートから再生成
   ps                      実行中コンテナの状態
-  auth-status [name]      Claude CLI 認証状態の確認
+  auth-status [name]      Claude Code 認証状態の確認
   types                   利用可能なコンテナタイプ一覧
   help                    このヘルプを表示
 

@@ -18,7 +18,7 @@ fi
 # ---------------------------------------------------------------------------
 # ~/.claude.json の永続化（コピー方式）
 # volume 上の ~/.claude/.claude.json ↔ コンテナ上の ~/.claude.json をコピーで同期
-# symlink は Claude CLI の atomic write（temp → rename）で上書きされるため使用しない
+# symlink は Claude Code の atomic write（temp → rename）で上書きされるため使用しない
 # ---------------------------------------------------------------------------
 
 # 起動時: volume → コンテナに復元
@@ -32,7 +32,7 @@ elif [ -f "$HOME/.claude.json" ] && [ ! -L "$HOME/.claude.json" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Claude CLI 認証状態のログ出力（デバッグ用）
+# Claude Code 認証状態のログ出力（デバッグ用）
 # ---------------------------------------------------------------------------
 if [ -f "$HOME/.claude/.credentials.json" ]; then
     expires_at=$(jq -r '
@@ -47,21 +47,21 @@ if [ -f "$HOME/.claude/.credentials.json" ]; then
     if [ "$expires_at" != "no_token" ] && [ "$expires_at" != "unknown" ] && [ "$expires_at" != "parse_error" ]; then
         now_ms=$(date +%s%3N 2>/dev/null || echo "0")
         if [ "$now_ms" != "0" ] && [ "$expires_at" -lt "$now_ms" ] 2>/dev/null; then
-            echo "[entrypoint] ⚠ Claude CLI アクセストークンの有効期限が切れています（expiresAt: $expires_at）"
+            echo "[entrypoint] ⚠ Claude Code アクセストークンの有効期限が切れています（expiresAt: $expires_at）"
             echo "[entrypoint]   再認証が必要な場合は 'claude' を実行してください"
         else
-            echo "[entrypoint] ✓ Claude CLI 認証情報を検出（有効期限内）"
+            echo "[entrypoint] ✓ Claude Code 認証情報を検出（有効期限内）"
         fi
     fi
 else
-    echo "[entrypoint] Claude CLI 未認証（.credentials.json が見つかりません）"
+    echo "[entrypoint] Claude Code 未認証（.credentials.json が見つかりません）"
 fi
 
 # ---------------------------------------------------------------------------
 # machine-id 空チェック（デバッグ用）
 # ---------------------------------------------------------------------------
 if [ ! -s /etc/machine-id ]; then
-    echo "[entrypoint] ⚠ /etc/machine-id が空です — Claude CLI の認証が保持されない可能性があります"
+    echo "[entrypoint] ⚠ /etc/machine-id が空です — Claude Code の認証が保持されない可能性があります"
 fi
 
 # ---------------------------------------------------------------------------
