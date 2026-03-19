@@ -92,6 +92,10 @@ cp .env.example .env
 ```
 
 Edit `.env` to adjust versions, etc.
+
+`COMPOSE_PROJECT_NAME` in `.env` sets the prefix for all Docker volume and container names (default: `acg-sandbox`).
+The `./aicon rm --volumes` and `./aicon purge-shared` commands use this value to identify volumes to delete.
+
 If using a Max subscription, `ANTHROPIC_API_KEY` can be left empty.
 
 #### 2. Create & Start Instances
@@ -241,6 +245,10 @@ cp .env.example .env
 ```
 
 `.env` を編集してバージョン等を調整する。
+
+`.env` の `COMPOSE_PROJECT_NAME` は Docker ボリューム名・コンテナ名のプレフィックスを決定する（デフォルト: `acg-sandbox`）。
+`./aicon rm --volumes` や `./aicon purge-shared` もこの値でボリュームを特定して削除する。
+
 Max サブスクリプションで使う場合、`ANTHROPIC_API_KEY` は空のままでよい。
 
 #### 2. インスタンス作成 & 起動
