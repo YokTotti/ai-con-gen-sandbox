@@ -126,7 +126,7 @@ RUN mkdir -p /home/${USERNAME}/project \
 
 # Go workspace
 ENV GOPATH="/home/${USERNAME}/go"
-ENV PATH="${GOPATH}/bin:/home/${USERNAME}/.local/bin:${PATH}"
+ENV PATH="${GOPATH}/bin:/home/${USERNAME}/.bun/bin:/home/${USERNAME}/.local/bin:${PATH}"
 RUN mkdir -p ${GOPATH}/{bin,src,pkg} \
     && chown -R ${USERNAME}:${USERNAME} ${GOPATH}
 
@@ -177,6 +177,11 @@ RUN echo '{"mcpServers":{"chrome-devtools":{"command":"npx","args":["-y","chrome
     > /home/${USERNAME}/.mcp.json.chrome-devtool
 
 # ---------------------------------------------------------------------------
+# Bun
+# ---------------------------------------------------------------------------
+RUN curl -fsSL https://bun.com/install | bash
+
+# ---------------------------------------------------------------------------
 # Python（uv 経由でインストール）
 # ---------------------------------------------------------------------------
 RUN uv python install ${PYTHON_VERSION}
@@ -192,6 +197,8 @@ RUN npx playwright install chromium
 RUN echo 'export PATH="/home/${USERNAME}/.local/bin:$PATH"' >> /home/${USERNAME}/.bashrc \
     && echo 'export GOPATH="/home/${USERNAME}/go"' >> /home/${USERNAME}/.bashrc \
     && echo 'export PATH="$GOPATH/bin:$PATH"' >> /home/${USERNAME}/.bashrc \
+    && echo 'export BUN_INSTALL="$HOME/.bun"' >> /home/${USERNAME}/.bashrc \
+    && echo 'export PATH="$BUN_INSTALL/bin:$PATH"' >> /home/${USERNAME}/.bashrc \
     && cat >> /home/${USERNAME}/.bashrc <<'BASHRC'
 
 # --- claude.json sync (EXIT trap + background periodic copy) ---

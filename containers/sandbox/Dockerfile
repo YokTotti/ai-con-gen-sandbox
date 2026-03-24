@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     less \
     vim \
     openssh-client \
+    unzip \
     tzdata \
     locales \
     && rm -rf /var/lib/apt/lists/*
@@ -124,11 +125,16 @@ RUN echo '{"mcpServers":{"chrome-devtools":{"command":"npx","args":["-y","chrome
     > /home/${USERNAME}/.mcp.json.chrome-devtool
 
 # ---------------------------------------------------------------------------
+# Bun
+# ---------------------------------------------------------------------------
+RUN curl -fsSL https://bun.com/install | bash
+
+# ---------------------------------------------------------------------------
 # Python（uv 経由）
 # ---------------------------------------------------------------------------
 RUN uv python install ${PYTHON_VERSION}
 
-ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
+ENV PATH="/home/${USERNAME}/.bun/bin:/home/${USERNAME}/.local/bin:${PATH}"
 
 # ---------------------------------------------------------------------------
 # .bashrc: ~/.claude.json を shared volume に保存（EXIT trap + バックグラウンド定期コピー）
